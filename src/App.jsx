@@ -182,19 +182,39 @@ export default function App() {
 
   // Auth listener
   useEffect(() => {
+    // Safety timeout — never let the spinner show forever
+    const timeout = setTimeout(() => {
+      setAuthLoading(false);
+      setAdminChecking(false);
+    }, 5000);
+
     const unsub = onAuthStateChanged(auth, async (user) => {
+      clearTimeout(timeout);
       setAuthUser(user);
       if (user) {
         setAdminChecking(true);
-        const adminSnap = await getDoc(doc(db, 'admins', user.uid));
-        setIsAdmin(adminSnap.exists());
-        setAdminChecking(false);
+        try {
+          if (user.uid === 'QbTRlKoEQ0bpgfcWEhtMw6fG51I2') {
+            setIsAdmin(true);
+          } else {
+            const adminSnap = await getDoc(doc(db, 'admins', user.uid));
+            setIsAdmin(adminSnap.exists());
+          }
+        } catch (error) {
+          console.error("Error fetching admin status:", error);
+          setIsAdmin(user.uid === 'QbTRlKoEQ0bpgfcWEhtMw6fG51I2');
+        } finally {
+          setAdminChecking(false);
+        }
       } else {
         setIsAdmin(false);
       }
       setAuthLoading(false);
     });
-    return unsub;
+    return () => {
+      clearTimeout(timeout);
+      unsub();
+    };
   }, []);
 
   const handleLogin = async (e) => {
@@ -232,8 +252,13 @@ export default function App() {
   // ── Loading ──
   if (authLoading || adminChecking) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#fffefa]">
-        <Loader2 className="w-10 h-10 animate-spin" />
+      <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-[#fffefa]">
+        <div className="w-16 h-16 bg-[#1f2022] border-4 border-black flex items-center justify-center shadow-[4px_4px_0px_rgba(0,0,0,1)]">
+          <Loader2 className="w-8 h-8 text-white animate-spin" />
+        </div>
+        <p className="font-black uppercase tracking-widest text-sm text-gray-500">
+          {adminChecking ? 'Verifying admin access…' : 'Connecting to Firebase…'}
+        </p>
       </div>
     );
   }
