@@ -35,28 +35,54 @@ const isPaymentValid = (data) => data?.paymentStatus === 'paid';
 // Core check-in logic — reads currentDay from Firestore config/event
 // ─────────────────────────────────────────────────────────────────────────────
 async function processCheckIn(uid) {
-  // 1. Fetch current event day from config
-  const configSnap = await getDoc(doc(db, 'config', 'event'));
-  const currentDay = configSnap.exists() ? configSnap.data().currentDay : 1;
+  console.log('[Scanner] processCheckIn called with uid:', uid);
 
-  // 2. Fetch registration
+  // 1. Fetch current event day from config (fallback to day 1 if not set)
+  let currentDay = 1;
+  try {
+    const configSnap = await getDoc(doc(db, 'config', 'event'));
+    if (configSnap.exists()) {
+      currentDay = configSnap.data().currentDay ?? 1;
+    }
+  } catch (configErr) {
+    console.warn('[Scanner] Could not fetch config/event, defaulting to Day 1:', configErr.message);
+  }
+
+  // 2. Fetch registration by UID (document ID = UID)
   const regRef = doc(db, 'registrations', uid);
-  const regSnap = await getDoc(regRef);
+  let regSnap;
+  try {
+    regSnap = await getDoc(regRef);
+  } catch (fetchErr) {
+    console.error('[Scanner] Firestore fetch failed:', fetchErr.message);
+    return { status: 'INVALID_PASS', participant: null, currentDay, error: fetchErr.message };
+  }
+
+  console.log('[Scanner] regSnap.exists():', regSnap.exists());
 
   if (!regSnap.exists()) {
+    console.warn('[Scanner] No document found at registrations/' + uid);
     return { status: 'INVALID_PASS', participant: null, currentDay };
   }
 
   const data = regSnap.data();
+  console.log('[Scanner] Registration data:', JSON.stringify(data));
+
   const participant = {
     name: data.name || data.firstName || 'Unknown',
-    college: data.college || data.companyName || '—',
-    passType: data.passType || 'Unknown',
+    // Support both 'college' (students) and 'companyName' (startups)
+    college: data.college || data.institution || data.companyName || '—',
+    passType: data.passType || 'Visitor\'s Pass',
     paymentStatus: data.paymentStatus || 'pending',
-    role: data.role || '',
+    role: data.role || 'student',
   };
 
-  // 3. Day-based check-in field mapping
+  // 3. Validate payment — reject if still 'pending' (not yet paid)
+  if (data.paymentStatus === 'pending' || !data.paymentStatus) {
+    return { status: 'PAYMENT_PENDING', participant, currentDay };
+  }
+
+  // 4. Day-based check-in field mapping
   const dayMap = {
     1: { checkedIn: 'checkedInDay1', checkInTime: 'day1CheckInTime' },
     2: { checkedIn: 'checkedInDay2', checkInTime: 'day2CheckInTime' },
@@ -72,16 +98,19 @@ async function processCheckIn(uid) {
     return { status: 'ALREADY_CHECKED_IN', participant, currentDay, checkedInAt: timeString };
   }
 
-  // 4. Grant entry
+  // 5. Grant entry — write check-in to Firestore
   await updateDoc(regRef, {
     [fields.checkedIn]: true,
     [fields.checkInTime]: serverTimestamp(),
+    updatedAt: new Date().toISOString(),
   });
 
+  console.log('[Scanner] Entry granted for:', participant.name);
   return { status: 'ENTRY_GRANTED', participant, currentDay };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+
 // Components
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -98,15 +127,18 @@ const InfoRow = ({ icon: Icon, label, value }) => (
 const ResultBanner = ({ result, onDismiss }) => {
   if (!result) return null;
 
-  const isGranted = result.status === 'ENTRY_GRANTED';
-  const isAlready = result.status === 'ALREADY_CHECKED_IN';
-  const isInvalid = result.status === 'INVALID_PASS';
+  const isGranted  = result.status === 'ENTRY_GRANTED';
+  const isAlready  = result.status === 'ALREADY_CHECKED_IN';
+  const isInvalid  = result.status === 'INVALID_PASS';
+  const isPending  = result.status === 'PAYMENT_PENDING';
+
+  const bgColor = isGranted ? 'bg-green-400'
+    : isAlready ? 'bg-yellow-400'
+    : isPending ? 'bg-orange-400'
+    : 'bg-red-400';
 
   return (
-    <div
-      className={`border-4 border-black shadow-[6px_6px_0px_rgba(0,0,0,1)] p-6
-        ${isGranted ? 'bg-green-400' : isAlready ? 'bg-yellow-400' : 'bg-red-400'}`}
-    >
+    <div className={`border-4 border-black shadow-[6px_6px_0px_rgba(0,0,0,1)] p-6 ${bgColor}`}>
       {/* Status header */}
       <div className="flex items-start gap-3 mb-4">
         {isGranted ? (
@@ -118,16 +150,26 @@ const ResultBanner = ({ result, onDismiss }) => {
         )}
         <div>
           <h2 className="font-black uppercase tracking-tight text-2xl leading-none">
-            {isGranted ? '✔ Entry Granted' : isAlready ? '⚠ Already Checked In' : '✘ Invalid Pass'}
+            {isGranted  ? '✔ Entry Granted'
+             : isAlready ? '⚠ Already Checked In'
+             : isPending ? '⏳ Payment Pending'
+             : '✘ Invalid Pass'}
           </h2>
           {isAlready && (
             <p className="font-bold text-sm mt-1 opacity-80">
               Entered at {result.checkedInAt} · Day {result.currentDay}
             </p>
           )}
+          {isPending && (
+            <p className="font-bold text-sm mt-1 opacity-80">
+              Registration found but payment not completed yet.
+            </p>
+          )}
           {isInvalid && (
             <p className="font-bold text-sm mt-1 opacity-80">
-              No registration found for this QR code.
+              {result.error
+                ? `Error: ${result.error}`
+                : 'No registration found for this QR code.'}
             </p>
           )}
         </div>
@@ -144,6 +186,7 @@ const ResultBanner = ({ result, onDismiss }) => {
           />
           <InfoRow icon={Ticket} label="Pass Type" value={result.participant.passType} />
           <InfoRow
+
             icon={CreditCard}
             label="Payment"
             value={result.participant.paymentStatus}
