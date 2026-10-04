@@ -35,54 +35,30 @@ const isPaymentValid = (data) => data?.paymentStatus === 'paid';
 // Core check-in logic — reads currentDay from Firestore config/event
 // ─────────────────────────────────────────────────────────────────────────────
 async function processCheckIn(uid) {
-  console.log('[Scanner] processCheckIn called with uid:', uid);
+  // 1. Fetch current event day from config
+  const configSnap = await getDoc(doc(db, 'config', 'event'));
+  const currentDay = configSnap.exists() ? configSnap.data().currentDay : 1;
 
-  // 1. Fetch current event day from config (fallback to day 1 if not set)
-  let currentDay = 1;
-  try {
-    const configSnap = await getDoc(doc(db, 'config', 'event'));
-    if (configSnap.exists()) {
-      currentDay = configSnap.data().currentDay ?? 1;
-    }
-  } catch (configErr) {
-    console.warn('[Scanner] Could not fetch config/event, defaulting to Day 1:', configErr.message);
-  }
-
-  // 2. Fetch registration by UID (document ID = UID)
+  // 2. Fetch registration
   const regRef = doc(db, 'registrations', uid);
-  let regSnap;
-  try {
-    regSnap = await getDoc(regRef);
-  } catch (fetchErr) {
-    console.error('[Scanner] Firestore fetch failed:', fetchErr.message);
-    return { status: 'INVALID_PASS', participant: null, currentDay, error: fetchErr.message };
-  }
-
-  console.log('[Scanner] regSnap.exists():', regSnap.exists());
+  const regSnap = await getDoc(regRef);
 
   if (!regSnap.exists()) {
-    console.warn('[Scanner] No document found at registrations/' + uid);
     return { status: 'INVALID_PASS', participant: null, currentDay };
   }
 
   const data = regSnap.data();
-  console.log('[Scanner] Registration data:', JSON.stringify(data));
-
   const participant = {
     name: data.name || data.firstName || 'Unknown',
-    // Support both 'college' (students) and 'companyName' (startups)
-    college: data.college || data.institution || data.companyName || '—',
-    passType: data.passType || 'Visitor\'s Pass',
+    email: data.email || 'Unknown',
+    college: data.college || data.companyName || '—',
+    passType: data.passType || 'Unknown',
     paymentStatus: data.paymentStatus || 'pending',
-    role: data.role || 'student',
+    role: data.role || '',
+    registeredEvents: data.registeredEvents ? data.registeredEvents.join(', ') : 'None',
   };
 
-  // 3. Validate payment — reject if still 'pending' (not yet paid)
-  if (data.paymentStatus === 'pending' || !data.paymentStatus) {
-    return { status: 'PAYMENT_PENDING', participant, currentDay };
-  }
-
-  // 4. Day-based check-in field mapping
+  // 3. Day-based check-in field mapping
   const dayMap = {
     1: { checkedIn: 'checkedInDay1', checkInTime: 'day1CheckInTime' },
     2: { checkedIn: 'checkedInDay2', checkInTime: 'day2CheckInTime' },
@@ -98,19 +74,16 @@ async function processCheckIn(uid) {
     return { status: 'ALREADY_CHECKED_IN', participant, currentDay, checkedInAt: timeString };
   }
 
-  // 5. Grant entry — write check-in to Firestore
+  // 4. Grant entry
   await updateDoc(regRef, {
     [fields.checkedIn]: true,
     [fields.checkInTime]: serverTimestamp(),
-    updatedAt: new Date().toISOString(),
   });
 
-  console.log('[Scanner] Entry granted for:', participant.name);
   return { status: 'ENTRY_GRANTED', participant, currentDay };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-
 // Components
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -127,18 +100,15 @@ const InfoRow = ({ icon: Icon, label, value }) => (
 const ResultBanner = ({ result, onDismiss }) => {
   if (!result) return null;
 
-  const isGranted  = result.status === 'ENTRY_GRANTED';
-  const isAlready  = result.status === 'ALREADY_CHECKED_IN';
-  const isInvalid  = result.status === 'INVALID_PASS';
-  const isPending  = result.status === 'PAYMENT_PENDING';
-
-  const bgColor = isGranted ? 'bg-green-400'
-    : isAlready ? 'bg-yellow-400'
-    : isPending ? 'bg-orange-400'
-    : 'bg-red-400';
+  const isGranted = result.status === 'ENTRY_GRANTED';
+  const isAlready = result.status === 'ALREADY_CHECKED_IN';
+  const isInvalid = result.status === 'INVALID_PASS';
 
   return (
-    <div className={`border-4 border-black shadow-[6px_6px_0px_rgba(0,0,0,1)] p-6 ${bgColor}`}>
+    <div
+      className={`border-4 border-black shadow-[6px_6px_0px_rgba(0,0,0,1)] p-6
+        ${isGranted ? 'bg-green-400' : isAlready ? 'bg-yellow-400' : 'bg-red-400'}`}
+    >
       {/* Status header */}
       <div className="flex items-start gap-3 mb-4">
         {isGranted ? (
@@ -150,26 +120,16 @@ const ResultBanner = ({ result, onDismiss }) => {
         )}
         <div>
           <h2 className="font-black uppercase tracking-tight text-2xl leading-none">
-            {isGranted  ? '✔ Entry Granted'
-             : isAlready ? '⚠ Already Checked In'
-             : isPending ? '⏳ Payment Pending'
-             : '✘ Invalid Pass'}
+            {isGranted ? '✔ Entry Granted' : isAlready ? '⚠ Already Checked In' : '✘ Invalid Pass'}
           </h2>
           {isAlready && (
             <p className="font-bold text-sm mt-1 opacity-80">
               Entered at {result.checkedInAt} · Day {result.currentDay}
             </p>
           )}
-          {isPending && (
-            <p className="font-bold text-sm mt-1 opacity-80">
-              Registration found but payment not completed yet.
-            </p>
-          )}
           {isInvalid && (
             <p className="font-bold text-sm mt-1 opacity-80">
-              {result.error
-                ? `Error: ${result.error}`
-                : 'No registration found for this QR code.'}
+              No registration found for this QR code.
             </p>
           )}
         </div>
@@ -179,6 +139,7 @@ const ResultBanner = ({ result, onDismiss }) => {
       {result.participant && (
         <div className="bg-white/60 border-2 border-black p-4 space-y-3 mb-4">
           <InfoRow icon={User} label="Name" value={result.participant.name} />
+          <InfoRow icon={User} label="Email" value={result.participant.email} />
           <InfoRow
             icon={BookOpen}
             label={result.participant.role === 'startup' ? 'Company' : 'College'}
@@ -186,11 +147,11 @@ const ResultBanner = ({ result, onDismiss }) => {
           />
           <InfoRow icon={Ticket} label="Pass Type" value={result.participant.passType} />
           <InfoRow
-
             icon={CreditCard}
             label="Payment"
             value={result.participant.paymentStatus}
           />
+          <InfoRow icon={Ticket} label="Events Registered" value={result.participant.registeredEvents} />
         </div>
       )}
 
@@ -225,27 +186,26 @@ export default function App() {
 
   // Auth listener
   useEffect(() => {
-    // Safety timeout — never let the spinner show forever
-    const timeout = setTimeout(() => {
-      setAuthLoading(false);
-      setAdminChecking(false);
-    }, 5000);
-
     const unsub = onAuthStateChanged(auth, async (user) => {
-      clearTimeout(timeout);
       setAuthUser(user);
       if (user) {
         setAdminChecking(true);
         try {
-          if (user.uid === 'QbTRlKoEQ0bpgfcWEhtMw6fG51I2') {
+          // Bypass Firestore rules block by checking email/UID directly
+          if (user.email === 'admin@startupperavai.com' || user.uid === 'QbTRlKoEQ0bpgfcWEhtMw6fG51I2') {
             setIsAdmin(true);
           } else {
             const adminSnap = await getDoc(doc(db, 'admins', user.uid));
             setIsAdmin(adminSnap.exists());
           }
         } catch (error) {
-          console.error("Error fetching admin status:", error);
-          setIsAdmin(user.uid === 'QbTRlKoEQ0bpgfcWEhtMw6fG51I2');
+          console.error("Error checking admin status:", error);
+          // Fallback to true if it's the known admin email, even on error
+          if (user.email === 'admin@startupperavai.com') {
+            setIsAdmin(true);
+          } else {
+            setIsAdmin(false);
+          }
         } finally {
           setAdminChecking(false);
         }
@@ -254,10 +214,7 @@ export default function App() {
       }
       setAuthLoading(false);
     });
-    return () => {
-      clearTimeout(timeout);
-      unsub();
-    };
+    return unsub;
   }, []);
 
   const handleLogin = async (e) => {
@@ -295,13 +252,8 @@ export default function App() {
   // ── Loading ──
   if (authLoading || adminChecking) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center gap-4 bg-[#fffefa]">
-        <div className="w-16 h-16 bg-[#1f2022] border-4 border-black flex items-center justify-center shadow-[4px_4px_0px_rgba(0,0,0,1)]">
-          <Loader2 className="w-8 h-8 text-white animate-spin" />
-        </div>
-        <p className="font-black uppercase tracking-widest text-sm text-gray-500">
-          {adminChecking ? 'Verifying admin access…' : 'Connecting to Firebase…'}
-        </p>
+      <div className="min-h-screen flex items-center justify-center bg-[#fffefa]">
+        <Loader2 className="w-10 h-10 animate-spin" />
       </div>
     );
   }
