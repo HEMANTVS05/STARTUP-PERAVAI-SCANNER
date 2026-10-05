@@ -9,6 +9,10 @@ import {
   getDoc,
   updateDoc,
   serverTimestamp,
+  collection,
+  getDocs,
+  orderBy,
+  query,
 } from 'firebase/firestore';
 import { auth, db } from './firebase';
 import Scanner from './Scanner';
@@ -24,6 +28,9 @@ import {
   Ticket,
   AlertTriangle,
   Camera,
+  Layers,
+  ExternalLink,
+  RefreshCw,
 } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -184,13 +191,117 @@ const ResultBanner = ({ result, onDismiss }) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Main App
+// Rise Her Submissions View
 // ─────────────────────────────────────────────────────────────────────────────
+const RiseHerSubmissions = () => {
+  const [submissions, setSubmissions] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  const fetchSubmissions = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const q = query(collection(db, 'riseher'), orderBy('updatedAt', 'desc'));
+      const snap = await getDocs(q);
+      setSubmissions(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    } catch (e) {
+      console.error(e);
+      setError('Failed to load submissions.');
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchSubmissions(); }, []);
+
+  if (loading) return (
+    <div className="flex items-center justify-center py-20">
+      <Loader2 className="w-10 h-10 animate-spin" />
+    </div>
+  );
+
+  return (
+    <div className="p-4 space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="font-black text-xl uppercase tracking-tight">Rise Her Submissions</h2>
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">{submissions.length} submission{submissions.length !== 1 ? 's' : ''}</p>
+        </div>
+        <button onClick={fetchSubmissions} className="flex items-center gap-2 px-4 py-2 border-4 border-black bg-black text-white font-black uppercase tracking-widest text-xs shadow-[4px_4px_0_#555] hover:shadow-none hover:translate-x-1 hover:translate-y-1 transition-all">
+          <RefreshCw className="w-3.5 h-3.5" /> Refresh
+        </button>
+      </div>
+
+      {error && <p className="font-bold text-red-600 border-2 border-red-400 bg-red-50 p-3 text-sm">{error}</p>}
+
+      {submissions.length === 0 && !error && (
+        <div className="border-4 border-dashed border-black p-12 text-center">
+          <p className="font-black uppercase tracking-widest text-black/40">No submissions yet</p>
+        </div>
+      )}
+
+      {submissions.map((s, i) => (
+        <div key={s.id} className="border-4 border-black bg-white shadow-[6px_6px_0px_rgba(0,0,0,1)] overflow-hidden">
+          {/* Card accent */}
+          <div style={{ height: 5, background: 'linear-gradient(to right, #a80d11, #d82221 45%, #0b2140 55%, #0f50e3)' }} />
+          <div className="p-5 space-y-3">
+            {/* Number + Name */}
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <span className="w-8 h-8 flex items-center justify-center border-4 border-black bg-black text-white font-black text-sm shrink-0">{i + 1}</span>
+                <div>
+                  <p className="text-[9px] font-black uppercase tracking-[0.2em] text-gray-400 mb-0.5">Startup / Project / Idea</p>
+                  <h3 className="font-black text-base uppercase tracking-tight leading-tight">{s.startupName || '—'}</h3>
+                </div>
+              </div>
+              <div className="text-right shrink-0">
+                <p className="text-[9px] font-black uppercase tracking-widest text-gray-400">Submitted</p>
+                <p className="text-xs font-bold">{s.submittedAt ? new Date(s.submittedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}</p>
+              </div>
+            </div>
+
+            {/* Email */}
+            {s.submitterEmail && (
+              <div className="flex items-center gap-2">
+                <User className="w-3.5 h-3.5 text-gray-400 shrink-0" />
+                <p className="text-xs font-bold text-gray-500">{s.submitterEmail}</p>
+              </div>
+            )}
+
+            {/* Idea brief */}
+            <div className="p-3 bg-gray-50 border-l-4 border-black">
+              <p className="text-[9px] font-black uppercase tracking-widest text-gray-400 mb-1">Idea Brief</p>
+              <p className="text-sm font-bold text-gray-700 leading-relaxed">{s.ideaBrief || '—'}</p>
+            </div>
+
+            {/* Pitch deck link */}
+            {s.pitchDeckUrl ? (
+              <a
+                href={s.pitchDeckUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 px-4 py-2.5 border-4 border-black font-black uppercase tracking-widest text-xs bg-white hover:bg-black hover:text-white transition-all shadow-[3px_3px_0_#111] hover:shadow-none w-full justify-center"
+              >
+                <ExternalLink className="w-4 h-4" /> Open Pitch Deck / Presentation
+              </a>
+            ) : (
+              <p className="text-xs font-bold text-gray-400 italic">No pitch deck link provided</p>
+            )}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+
 export default function App() {
   const [authUser, setAuthUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminChecking, setAdminChecking] = useState(false);
+  const [activeTab, setActiveTab] = useState('scanner'); // 'scanner' | 'riseher'
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -357,12 +468,8 @@ export default function App() {
       {/* Header */}
       <div className="border-b-4 border-black bg-[#1f2022] px-4 py-3 flex items-center justify-between">
         <div>
-          <h1 className="font-black uppercase tracking-tight text-white text-lg leading-none">
-            Gate Scanner
-          </h1>
-          <p className="text-xs font-bold text-white/50 uppercase tracking-widest">
-            Startup Peravai 2026
-          </p>
+          <h1 className="font-black uppercase tracking-tight text-white text-lg leading-none">Admin Panel</h1>
+          <p className="text-xs font-bold text-white/50 uppercase tracking-widest">Startup Peravai 2026</p>
         </div>
         <button
           onClick={handleLogout}
@@ -372,53 +479,77 @@ export default function App() {
         </button>
       </div>
 
-      <div className="max-w-md mx-auto p-4 space-y-4">
-        {/* Idle State — Click to Scan */}
-        {!isScanning && !scanResult && !isProcessing && (
-          <button
-            onClick={() => setIsScanning(true)}
-            className="w-full py-16 border-4 border-black bg-white shadow-[6px_6px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-x-1 hover:translate-y-1 transition-all flex flex-col items-center gap-4"
-          >
-            <Camera className="w-12 h-12" />
-            <span className="font-black uppercase tracking-widest text-lg">Click here to scan</span>
-          </button>
-        )}
-
-        {/* Scanner panel — hide when result is showing */}
-        {isScanning && !scanResult && !isProcessing && (
-          <div className="border-4 border-black bg-white shadow-[6px_6px_0px_rgba(0,0,0,1)] relative">
-            <button
-              onClick={() => setIsScanning(false)}
-              className="absolute top-2 right-2 z-10 w-8 h-8 bg-black text-white flex items-center justify-center rounded-full hover:bg-gray-800 transition-colors"
-              aria-label="Close Scanner"
-            >
-              <XCircle className="w-5 h-5" />
-            </button>
-            <div className="border-b-4 border-black px-4 py-3 flex items-center gap-2 bg-black text-white">
-              <Camera className="w-5 h-5" />
-              <span className="font-black uppercase tracking-widest text-sm">
-                Point camera at QR
-              </span>
-            </div>
-            <div className="p-2">
-              <Scanner key={scannerKey} onScan={handleScan} />
-            </div>
-          </div>
-        )}
-
-        {/* Processing */}
-        {isProcessing && (
-          <div className="border-4 border-black bg-white shadow-[6px_6px_0px_rgba(0,0,0,1)] p-8 flex flex-col items-center gap-4">
-            <Loader2 className="w-12 h-12 animate-spin" />
-            <p className="font-black uppercase tracking-widest text-sm">Checking in…</p>
-          </div>
-        )}
-
-        {/* Result */}
-        {!isProcessing && scanResult && (
-          <ResultBanner result={scanResult} onDismiss={handleDismiss} />
-        )}
+      {/* Tab Navigation */}
+      <div className="flex border-b-4 border-black bg-white">
+        <button
+          onClick={() => setActiveTab('scanner')}
+          className={`flex items-center gap-2 px-6 py-4 font-black uppercase tracking-widest text-xs border-r-4 border-black transition-all ${
+            activeTab === 'scanner' ? 'bg-black text-white' : 'bg-white text-black hover:bg-gray-100'
+          }`}
+        >
+          <Camera className="w-4 h-4" /> Gate Scanner
+        </button>
+        <button
+          onClick={() => setActiveTab('riseher')}
+          className={`flex items-center gap-2 px-6 py-4 font-black uppercase tracking-widest text-xs transition-all ${
+            activeTab === 'riseher' ? 'bg-[#a80d11] text-white' : 'bg-white text-black hover:bg-gray-100'
+          }`}
+        >
+          <Layers className="w-4 h-4" /> Rise Her
+        </button>
       </div>
+      {/* Tab Content */}
+      {activeTab === 'riseher' ? (
+        <div className="max-w-2xl mx-auto">
+          <RiseHerSubmissions />
+        </div>
+      ) : (
+        <div className="max-w-md mx-auto p-4 space-y-4">
+          {/* Idle State — Click to Scan */}
+          {!isScanning && !scanResult && !isProcessing && (
+            <button
+              onClick={() => setIsScanning(true)}
+              className="w-full py-16 border-4 border-black bg-white shadow-[6px_6px_0px_rgba(0,0,0,1)] hover:shadow-none hover:translate-x-1 hover:translate-y-1 transition-all flex flex-col items-center gap-4"
+            >
+              <Camera className="w-12 h-12" />
+              <span className="font-black uppercase tracking-widest text-lg">Click here to scan</span>
+            </button>
+          )}
+
+          {/* Scanner panel — hide when result is showing */}
+          {isScanning && !scanResult && !isProcessing && (
+            <div className="border-4 border-black bg-white shadow-[6px_6px_0px_rgba(0,0,0,1)] relative">
+              <button
+                onClick={() => setIsScanning(false)}
+                className="absolute top-2 right-2 z-10 w-8 h-8 bg-black text-white flex items-center justify-center rounded-full hover:bg-gray-800 transition-colors"
+                aria-label="Close Scanner"
+              >
+                <XCircle className="w-5 h-5" />
+              </button>
+              <div className="border-b-4 border-black px-4 py-3 flex items-center gap-2 bg-black text-white">
+                <Camera className="w-5 h-5" />
+                <span className="font-black uppercase tracking-widest text-sm">Point camera at QR</span>
+              </div>
+              <div className="p-2">
+                <Scanner key={scannerKey} onScan={handleScan} />
+              </div>
+            </div>
+          )}
+
+          {/* Processing */}
+          {isProcessing && (
+            <div className="border-4 border-black bg-white shadow-[6px_6px_0px_rgba(0,0,0,1)] p-8 flex flex-col items-center gap-4">
+              <Loader2 className="w-12 h-12 animate-spin" />
+              <p className="font-black uppercase tracking-widest text-sm">Checking in…</p>
+            </div>
+          )}
+
+          {/* Result */}
+          {!isProcessing && scanResult && (
+            <ResultBanner result={scanResult} onDismiss={handleDismiss} />
+          )}
+        </div>
+      )}
     </div>
   );
 }
