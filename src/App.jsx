@@ -67,8 +67,14 @@ async function processCheckIn(qrValue) {
 
   // 3. Day-based check-in field mapping
   const dayMap = {
-    1: { checkedIn: 'checkedInDay1', checkInTime: 'day1CheckInTime' },
-    2: { checkedIn: 'checkedInDay2', checkInTime: 'day2CheckInTime' },
+    1: { 
+      checkedIn: isEventPass ? `checkedInDay1_${suffix}` : 'checkedInDay1', 
+      checkInTime: isEventPass ? `day1CheckInTime_${suffix}` : 'day1CheckInTime' 
+    },
+    2: { 
+      checkedIn: isEventPass ? `checkedInDay2_${suffix}` : 'checkedInDay2', 
+      checkInTime: isEventPass ? `day2CheckInTime_${suffix}` : 'day2CheckInTime' 
+    },
   };
   const fields = dayMap[currentDay] || dayMap[1];
 
