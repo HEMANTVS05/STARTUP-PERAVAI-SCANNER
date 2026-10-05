@@ -34,7 +34,11 @@ const isPaymentValid = (data) => data?.paymentStatus === 'paid';
 // ─────────────────────────────────────────────────────────────────────────────
 // Core check-in logic — reads currentDay from Firestore config/event
 // ─────────────────────────────────────────────────────────────────────────────
-async function processCheckIn(uid) {
+async function processCheckIn(qrValue) {
+  // Parse qrValue in case it has an event suffix (e.g. "uid::hackathon")
+  const [uid, suffix] = qrValue.split('::');
+  const isEventPass = !!suffix;
+
   // 1. Fetch current event day from config
   const configSnap = await getDoc(doc(db, 'config', 'event'));
   const currentDay = configSnap.exists() ? configSnap.data().currentDay : 1;
@@ -52,10 +56,13 @@ async function processCheckIn(uid) {
     name: data.name || data.firstName || 'Unknown',
     email: data.email || 'Unknown',
     college: data.college || data.companyName || '—',
-    passType: data.passType || 'Unknown',
+    passType: isEventPass ? suffix.toUpperCase() : (data.passType || 'Unknown'),
     paymentStatus: data.paymentStatus || 'pending',
     role: data.role || '',
     registeredEvents: data.registeredEvents ? data.registeredEvents.join(', ') : 'None',
+    sessionChoice: data.sessionChoice || '',
+    sessionSubtitle: data.sessionSubtitle || '',
+    isEventPass,
   };
 
   // 3. Day-based check-in field mapping
@@ -151,7 +158,14 @@ const ResultBanner = ({ result, onDismiss }) => {
             label="Payment"
             value={result.participant.paymentStatus}
           />
-          <InfoRow icon={Ticket} label="Events Registered" value={result.participant.registeredEvents} />
+          {result.participant.isEventPass ? (
+            <InfoRow icon={Ticket} label="Events Registered" value={result.participant.registeredEvents} />
+          ) : (
+            <>
+              {result.participant.sessionChoice && <InfoRow icon={BookOpen} label="Session Choice" value={result.participant.sessionChoice} />}
+              {result.participant.sessionSubtitle && <InfoRow icon={User} label="Speaker Details" value={result.participant.sessionSubtitle} />}
+            </>
+          )}
         </div>
       )}
 
