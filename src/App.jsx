@@ -57,7 +57,7 @@ async function processCheckIn(qrValue) {
     email: data.email || 'Unknown',
     college: data.college || data.companyName || '—',
     passType: isEventPass ? suffix.toUpperCase() : (data.passType || 'Unknown'),
-    paymentStatus: data.paymentStatus || 'pending',
+    paymentStatus: isEventPass ? 'PAID' : (data.paymentStatus || 'pending'),
     role: data.role || '',
     registeredEvents: data.registeredEvents ? data.registeredEvents.join(', ') : 'None',
     sessionChoice: data.sessionChoice || '',
@@ -164,9 +164,7 @@ const ResultBanner = ({ result, onDismiss }) => {
             label="Payment"
             value={result.participant.paymentStatus}
           />
-          {result.participant.isEventPass ? (
-            <InfoRow icon={Ticket} label="Events Registered" value={result.participant.registeredEvents} />
-          ) : (
+          {!result.participant.isEventPass && (
             <>
               {result.participant.sessionChoice && <InfoRow icon={BookOpen} label="Session Choice" value={result.participant.sessionChoice} />}
               {result.participant.sessionSubtitle && <InfoRow icon={User} label="Speaker Details" value={result.participant.sessionSubtitle} />}
